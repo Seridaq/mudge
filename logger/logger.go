@@ -36,7 +36,7 @@ func (l *Logger) Run() {
 			case entry := <-l.logCh:
 				// Maybe printing out all messages could be optional
 				// or possibly only print out certain levels, could do?
-				//fmt.Printf("[%s] %s\r\n", entry.Level, entry.Message)
+				fmt.Printf("[%s] %s\r\n", entry.Level, entry.Message)
 				fmt.Fprintf(l.writer, "[%s] %s\r\n", entry.Level, entry.Message)
 				l.wg.Add(1)
 			case <-l.stop:

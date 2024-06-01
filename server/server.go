@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Infinite-X-Studios/mudge/logger"
+	"github.com/Infinite-X-Studios/mudge/protocols/GMCP"
 	"github.com/google/uuid"
 )
 
@@ -96,6 +97,9 @@ func (server *Server) handleUserConnection(connection net.Conn) {
 	defer connection.Close()
 
 	go writeConn([]byte(server.banner), connection)
+
+	fmt.Println("GMCP Handshake...")
+	GMCP.Handshake(connection)
 
 	for {
 		n, err := connection.Read(buffer)
