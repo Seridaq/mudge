@@ -1,4 +1,4 @@
-package mudge\commands
+package commands
 
 type Command struct {
 }

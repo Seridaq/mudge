@@ -1,4 +1,4 @@
-package mudge\logger
+package logger
 
 import (
 	"fmt"

@@ -1,4 +1,4 @@
-package mudge\server
+package server
 
 import (
 	"fmt"
