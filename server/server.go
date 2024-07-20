@@ -1,11 +1,11 @@
-package mudge\server
+package server
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,66 +14,79 @@ import (
 )
 
 type Server struct {
-	address string
-	name    string
-	banner  string
-	logger  *logger.Logger
-	users   *sync.Map
+	port   string
+	name   string
+	banner string
+	logger *logger.Logger
+	users  *sync.Map
 }
 
-func New(address, name, banner string) (Server, error) {
-	num := len(strings.Split(string(address), ":"))
-	if num < 2 {
-		err := fmt.Errorf("Invalid Address. Please use ipv4 (127.0.0.1:23) or ipv6 notation ([::1]:23).")
-		return Server{}, err
+func New(port, name, banner string) (Server, error) {
+	// We will check if the folder exist for our log file and then open it as append only.
+	// TODO: We should create a new server file based off of the time. (This is super trivial and will take less time than this comment!)
+	_, err := os.Stat("data")
+
+	if os.IsNotExist(err) {
+		// Create the directory and any necessary parent directories
+		errDir := os.Mkdir("data", 0775)
+		if errDir != nil {
+			log.Fatal(errDir)
+		}
 	}
 
-	logFile, err := os.OpenFile("data/server.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	logFile, err := os.OpenFile(fmt.Sprintf("data/server_%d.log", time.Now().Unix()), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	logger := logger.New(logFile)
+	logger := logger.New(logFile, logger.LogLevelWarn)
 	logger.Run()
 
 	return Server{
-		address: address,
-		name:    name,
-		banner:  banner,
-		logger:  logger,
-		users:   &sync.Map{},
+		port:   ":" + port,
+		name:   name,
+		banner: banner,
+		logger: logger,
+		users:  &sync.Map{},
 	}, nil
 }
 
-// A helper function to type server.logger less
-func (server *Server) Log(level, message string, any ...any) {
-	server.logger.Log(level, message, any...)
-}
-
-// LogInfo?
-// LogError?
-// LogWarning?
-
 func (server *Server) RunServer() error {
 	// Make sure we stop and wait for all logging messages when leaving
-	defer time.Sleep(time.Second) // Adds some delay for logging crashes
-	defer server.logger.Wait()
-	defer server.logger.Stop()
+	//defer time.Sleep(time.Second) // Adds some delay for logging crashes
+	defer server.logger.Wait() // Wait stops the logger and waits for it to complete.
+	//defer server.logger.Stop()
 
-	listener, err := net.Listen("tcp", string(server.address))
+	listener, err := net.Listen("tcp", server.port)
+
 	if err != nil {
-		server.Log("ERROR", "Starting server failed: %s", err)
-		return fmt.Errorf("[%s] %s %s", "ERROR", "Starting server failed:", err)
+		server.LogError("Starting server failed: %s", err)
+		return FormatError("server failed", err)
 	}
-	defer listener.Close()
 
-	server.Log("INFO", "Server started: %s", server.address)
+	//listener4, err := net.ListenTCP("tcp4", &address)
+
+	//if err != nil {
+	//	server.LogError("Starting server failed: %s", err)
+	//	return FormatError("server failed", err)
+	//}
+	//defer listener4.Close()
+	//defer listener6.Close()
+
+	server.LogInfo("Server started: %v", listener.Addr().String())
 
 	for {
 		connection, err := listener.Accept()
+		//server.LogInfo(connection.LocalAddr().String())
+		//server.LogInfo(err.Error())
+
+		//connection, err = listener6.Accept()
+		server.LogInfo(connection.LocalAddr().String())
+		//server.LogInfo(err.Error())
+
 		if err != nil {
-			server.Log("ERROR", "Accepting connection failed: %s", err)
-			return fmt.Errorf("[%s] %s %s", "ERROR", "Accepting connection failed:", err)
+			server.LogError("Accepting connection failed: %s", err)
+			return FormatError("connection failed", err)
 		}
 
 		id := uuid.New().String()
@@ -81,9 +94,9 @@ func (server *Server) RunServer() error {
 
 		conn, ok := server.users.Load(id)
 		if ok {
-			server.Log("INFO", "Connection Accepted: %v (%v)", id, conn)
+			server.LogInfo("Connection Accepted: %v (%v)", id, conn)
 		} else {
-			server.Log("WARNING", "Getting the user failed.")
+			server.LogWarning("Getting the user failed.")
 			continue
 		}
 
@@ -91,16 +104,30 @@ func (server *Server) RunServer() error {
 	}
 }
 
+// handleUserConnection is the client handler. Here we wait for input
+// sent by the client and interact with the data to udate the state.
+// The server updates the data the player receives also.
 func (server *Server) handleUserConnection(connection net.Conn) {
 	var buffer = make([]byte, 1024)
 	defer connection.Close()
 
 	go writeConn([]byte(server.banner), connection)
 
+	// Let us just start with doing something simple. We will work on the
+	// other adanced things later.
+	//fmt.Println("GMCP Handshake...")
+	//GMCP.Handshake(connection)
+
 	for {
 		n, err := connection.Read(buffer)
 		if err != nil {
-			server.Log("ERROR", "Reading from connection: %v (%v)", connection, err)
+			if err == io.EOF {
+				server.LogInfo("Connection closed: %v", connection)
+				break
+			}
+
+			server.LogError("Reading from connection: %v (%v)", connection, err)
+			fmt.Println("Error: ", err)
 			continue
 		}
 		// Write only the number of bytes recieved
@@ -108,6 +135,7 @@ func (server *Server) handleUserConnection(connection net.Conn) {
 	}
 }
 
+// We write all data back to the sending client. This is an echo server.
 func writeConn(data []byte, connection net.Conn) {
 	var start, c int
 	var err error

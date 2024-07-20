@@ -1,4 +1,4 @@
-package mudge\logger
+package logger
 
 import (
 	"fmt"
@@ -7,54 +7,67 @@ import (
 	"sync"
 )
 
+const (
+	LogLevelInfo  = "INFO"
+	LogLevelWarn  = "WARNING"
+	LogLevelError = "ERROR"
+	LogLevelNone  = "NONE"
+)
+
 type LogEntry struct {
 	Level   string
 	Message string
 }
 
 type Logger struct {
-	logCh    chan *LogEntry
-	writer   io.Writer
-	wg       sync.WaitGroup
-	stop     chan struct{}
-	stopOnce sync.Once
+	logCh      chan *LogEntry
+	writer     io.Writer
+	wg         sync.WaitGroup
+	stop       chan struct{}
+	stopOnce   sync.Once
+	debugLevel string // Flag for enabling debug logging
 }
 
-func New(writer io.Writer) *Logger {
+func New(writer io.Writer, debugLevel string) *Logger {
 	return &Logger{
-		logCh:  make(chan *LogEntry),
-		writer: writer,
-		stop:   make(chan struct{}),
+		logCh:      make(chan *LogEntry),
+		writer:     writer,
+		stop:       make(chan struct{}),
+		debugLevel: debugLevel,
 	}
 }
 
 func (l *Logger) Run() {
 	go func() {
-		defer l.wg.Done()
 		for {
 			select {
 			case entry := <-l.logCh:
-				// Maybe printing out all messages could be optional
-				// or possibly only print out certain levels, could do?
-				//fmt.Printf("[%s] %s\r\n", entry.Level, entry.Message)
 				fmt.Fprintf(l.writer, "[%s] %s\r\n", entry.Level, entry.Message)
-				l.wg.Add(1)
+				if l.shouldPrintDebug(entry.Level) {
+					fmt.Printf("[%s] %s\r\n", entry.Level, entry.Message)
+				}
+				l.wg.Done()
 			case <-l.stop:
+				close(l.logCh) // Just for explicitness
 				return
 			}
 		}
 	}()
 }
 
-func (l *Logger) Log(level, message string, any ...any) {
+func (l *Logger) Log(level, format string, any ...any) {
 	l.wg.Add(1)
-	defer l.wg.Done()
 	select {
 	case <-l.stop:
 	// Don't send message if the logger is stopped
 	default:
-		l.logCh <- &LogEntry{Level: level, Message: fmt.Sprintf(message, any...)}
+		l.logCh <- &LogEntry{Level: level, Message: fmt.Sprintf(format, any...)}
 	}
+}
+
+func (l *Logger) shouldPrintDebug(level string) bool {
+
+	return l.debugLevel == "INFO" || (l.debugLevel == LogLevelWarn && (level == LogLevelWarn || level == LogLevelError)) || level == l.debugLevel
 }
 
 // Stop signals the logger to stop processing messages
@@ -68,8 +81,7 @@ func (l *Logger) Wait() {
 	l.Stop()
 	l.wg.Wait()
 	// If the writer is a file, then close it as we are done with it.
-	file, ok := l.writer.(*os.File)
-	if ok {
+	if file, ok := l.writer.(*os.File); ok {
 		file.Close()
 	}
 }
