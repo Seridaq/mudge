@@ -5,6 +5,31 @@ import (
 	"net"
 )
 
+// A helper function to shorten logging commands
+func (server *Server) Log(level, message string, any ...any) {
+	server.logger.Log(level, message, any...)
+}
+
+// A helper function that logs the given message at INFO level
+func (server *Server) LogInfo(message string, any ...any) {
+	server.Log("INFO", message, any...)
+}
+
+// A helper function that logs the given message at WARNING level
+func (server *Server) LogWarning(message string, any ...any) {
+	server.Log("WARNING", message, any...)
+}
+
+// A helper function that logs the given message at Error level
+func (server *Server) LogError(message string, any ...any) {
+	server.Log("ERROR", message, any...)
+}
+
+// A helper function that formats an error in a standard way
+func FormatError(message string, err error) error {
+	return fmt.Errorf("[%s] %s: %s", "ERROR", message, err)
+}
+
 // A client is an active connection
 type Client struct {
 	net.Conn
