@@ -67,7 +67,7 @@ func (l *Logger) Log(level, format string, any ...any) {
 
 func (l *Logger) shouldPrintDebug(level string) bool {
 
-	return l.debugLevel == "INFO" || (l.debugLevel == LogLevelWarn && (level == LogLevelWarn || level == LogLevelError)) || level == l.debugLevel
+	return l.debugLevel == LogLevelInfo || (l.debugLevel == LogLevelWarn && (level == LogLevelWarn || level == LogLevelError)) || level == l.debugLevel
 }
 
 // Stop signals the logger to stop processing messages

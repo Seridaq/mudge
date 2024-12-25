@@ -10,20 +10,22 @@ import (
 	"time"
 
 	"github.com/Infinite-X-Studios/mudge/logger"
+	"github.com/Infinite-X-Studios/mudge/objects"
 	"github.com/google/uuid"
 )
 
 type Server struct {
-	port   string
-	name   string
-	banner string
-	logger *logger.Logger
-	users  *sync.Map
+	port        string
+	name        string
+	banner      string
+	loggerLevel string
+	logger      *logger.Logger
+	users       *sync.Map
+	startingMap *objects.Room
 }
 
 func New(port, name, banner string) (Server, error) {
 	// We will check if the folder exist for our log file and then open it as append only.
-	// TODO: We should create a new server file based off of the time. (This is super trivial and will take less time than this comment!)
 	_, err := os.Stat("data")
 
 	if os.IsNotExist(err) {
@@ -34,47 +36,78 @@ func New(port, name, banner string) (Server, error) {
 		}
 	}
 
+	// The log file is now created based off the time the server was started.
 	logFile, err := os.OpenFile(fmt.Sprintf("data/server_%d.log", time.Now().Unix()), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	logger := logger.New(logFile, logger.LogLevelWarn)
+	// TODO: I want to be able to set the loggers log level in a config file.
+	// We will worry about this later, as we do not have a config file yet.
+	logger := logger.New(logFile, logger.LogLevelInfo)
 	logger.Run()
 
+	// TODO: Remove this when we can!
+	// While we are debugging, let us create a room for testing
+	theVoid := objects.NewRoom("The Void")
+
 	return Server{
-		port:   ":" + port,
-		name:   name,
-		banner: banner,
-		logger: logger,
-		users:  &sync.Map{},
+		port:        ":" + port,
+		name:        name,
+		banner:      banner,
+		logger:      logger,
+		users:       &sync.Map{},
+		startingMap: theVoid,
 	}, nil
 }
 
 func (server *Server) RunServer() error {
-	// Make sure we stop and wait for all logging messages when leaving
-	//defer time.Sleep(time.Second) // Adds some delay for logging crashes
-	defer server.logger.Wait() // Wait stops the logger and waits for it to complete.
-	//defer server.logger.Stop()
+	// Wait stops the logger and waits for it to complete.
+	defer server.logger.Wait()
 
-	listener, err := net.Listen("tcp", server.port)
+	// NOTE: I was having trouble with TCP listeners created by net.Listen("tcp", server.port) only
+	// binding to IPv6 and not IPv4. A workaround to this is to create both a TCPv4 and TCPv6
+	// listener and listen for connections separately.
 
-	if err != nil {
-		server.LogError("Starting server failed: %s", err)
-		return FormatError("server failed", err)
+	// Try and create a TCP v4 listener
+	listener4, err4 := net.Listen("tcp4", server.port)
+	if err4 != nil {
+		server.LogError("Failed to listen on IPv4: %v", err4)
+	} else {
+		defer listener4.Close()
+		server.LogInfo("Server started: %v", listener4.Addr().String())
 	}
 
-	//listener4, err := net.ListenTCP("tcp4", &address)
+	// Try to create a TCP v6 listener
+	listener6, err6 := net.Listen("tcp6", server.port)
+	if err6 != nil {
+		server.LogError("Failed to listen on IPv6: %v", err6)
+	} else {
+		defer listener6.Close()
+		server.LogInfo("Server started: %v", listener6.Addr().String())
+	}
 
-	//if err != nil {
-	//	server.LogError("Starting server failed: %s", err)
-	//	return FormatError("server failed", err)
-	//}
-	//defer listener4.Close()
-	//defer listener6.Close()
+	// Start the server if at least one of the listeners exist
+	if err4 == nil && err6 == nil {
+		// Run the IPv4 listener on a separate go routine
+		go server.acceptConnections(listener4)
+		// Listen for IPv6 connections on the main thread
+		server.acceptConnections(listener6)
+	} else if err4 == nil {
+		// Listen for IPv4 connections on the main thread
+		server.acceptConnections(listener4)
+	} else if err6 == nil {
+		// Listen for IPv6 connections on the main thread
+		server.acceptConnections(listener6)
+	} else {
+		// Neither listener was able to start. The server fails
+		return fmt.Errorf("[ERROR] The server failed to start on IPv4 and IPv6: \r\n %v \r\n %v", err4, err6)
+	}
 
-	server.LogInfo("Server started: %v", listener.Addr().String())
+	return nil
+}
 
+func (server *Server) acceptConnections(listener net.Listener) {
 	for {
 		connection, err := listener.Accept()
 		//server.LogInfo(connection.LocalAddr().String())
@@ -86,13 +119,14 @@ func (server *Server) RunServer() error {
 
 		if err != nil {
 			server.LogError("Accepting connection failed: %s", err)
-			return FormatError("connection failed", err)
+			//return FormatError("connection failed", err)
 		}
 
 		id := uuid.New().String()
-		server.users.Store(id, connection)
+		player := objects.NewPlayer("")
+		server.users.Store(player, connection)
 
-		conn, ok := server.users.Load(id)
+		conn, ok := server.users.Load(player)
 		if ok {
 			server.LogInfo("Connection Accepted: %v (%v)", id, conn)
 		} else {
@@ -100,6 +134,7 @@ func (server *Server) RunServer() error {
 			continue
 		}
 
+		// The user is connected, let's start handling that connection
 		go server.handleUserConnection(conn.(net.Conn))
 	}
 }
@@ -111,10 +146,10 @@ func (server *Server) handleUserConnection(connection net.Conn) {
 	var buffer = make([]byte, 1024)
 	defer connection.Close()
 
-	go writeConn([]byte(server.banner), connection)
+	writeConn([]byte(server.banner), connection)
 
 	// Let us just start with doing something simple. We will work on the
-	// other adanced things later.
+	// other advanced things later.
 	//fmt.Println("GMCP Handshake...")
 	//GMCP.Handshake(connection)
 
@@ -130,8 +165,9 @@ func (server *Server) handleUserConnection(connection net.Conn) {
 			fmt.Println("Error: ", err)
 			continue
 		}
-		// Write only the number of bytes recieved
-		go writeConn(buffer[:n], connection)
+
+		// Write only the number of bytes received
+		//go writeConn(buffer[:n], connection)
 	}
 }
 

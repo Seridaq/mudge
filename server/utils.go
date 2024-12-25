@@ -26,7 +26,7 @@ func (server *Server) LogError(message string, any ...any) {
 }
 
 // A helper function that formats an error in a standard way
-func FormatError(message string, err error) error {
+func FormatError(message string, err ...error) error {
 	return fmt.Errorf("[%s] %s: %s", "ERROR", message, err)
 }
 
